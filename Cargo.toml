@@ -1,0 +1,10 @@
+[package]
+name = "periodogram"
+version = "0.1.0"
+authors = ["Alexey Voznyuk <me@swizard.info>"]
+edition = "2018"
+
+[dependencies]
+rand = "^0.7"
+rustdct = "^0.5"
+piston_window = "^0.116"

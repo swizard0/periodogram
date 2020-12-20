@@ -45,6 +45,7 @@ fn main() {
     let points = noised_signal_gen(amplitude.1, 50.0, 0.1, Duration::from_micros(50_000), 128, false);
 
     let mut dct = Dct::new(DctParams {
+        outputs_offset: 0,
         outputs_count: 128,
         coeffs_count: 16,
     });
@@ -57,7 +58,12 @@ fn main() {
             clear([0.0, 0.0, 0.0, 1.0], g2d);
             let trans = context.transform.trans(5.0, 20.0);
             text::Text::new_color([0.0, 1.0, 0.0, 1.0], 16).draw(
-                &format!("#outputs: A/S [ {} ], #coeffs Z/X [ {} ]", dct.params.outputs_count, dct.params.coeffs_count),
+                &format!(
+                    "outputs offset: Q/W [ {} ], #outputs: A/S [ {} ], #coeffs Z/X [ {} ]",
+                    dct.params.outputs_offset,
+                    dct.params.outputs_count,
+                    dct.params.coeffs_count,
+                ),
                 &mut glyphs,
                 &context.draw_state,
                 trans,
@@ -66,7 +72,7 @@ fn main() {
             glyphs.factory.encoder.flush(device);
 
             if let Some(tr) = ViewportTranslator::new(&context.viewport) {
-                draw(&points, amplitude, dct.outputs(), |element| match element {
+                draw(&points, amplitude, dct.params.outputs_offset, dct.outputs(), |element| match element {
                     DrawElement::Line { color, radius, source_x, source_y, target_x, target_y } => {
                         line(color, radius, [tr.x(source_x), tr.y(source_y), tr.x(target_x), tr.y(target_y)], context.transform, g2d);
                         line(
@@ -89,11 +95,19 @@ fn main() {
         });
 
         match event.press_args() {
+            Some(Button::Keyboard(Key::Q)) if dct.params.outputs_offset > 0 => {
+                dct.params.outputs_offset -= 1;
+                dct.apply(&points, amplitude);
+            },
+            Some(Button::Keyboard(Key::W)) if dct.params.outputs_offset + dct.params.outputs_count < points.len() => {
+                dct.params.outputs_offset += 1;
+                dct.apply(&points, amplitude);
+            },
             Some(Button::Keyboard(Key::A)) if dct.params.outputs_count > 1 => {
                 dct.params.outputs_count -= 1;
                 dct.apply(&points, amplitude);
             },
-            Some(Button::Keyboard(Key::S)) if dct.params.outputs_count < points.len() => {
+            Some(Button::Keyboard(Key::S)) if dct.params.outputs_offset + dct.params.outputs_count < points.len() => {
                 dct.params.outputs_count += 1;
                 dct.apply(&points, amplitude);
             },
@@ -105,8 +119,6 @@ fn main() {
                 dct.params.coeffs_count += 1;
                 dct.apply(&points, amplitude);
             },
-            Some(Button::Keyboard(Key::Q)) =>
-                break,
             _ =>
                 (),
         }
@@ -160,7 +172,15 @@ impl ViewportTranslator {
     }
 }
 
-fn draw<DF>(points: &[Reading], amplitude: (f64, f64), dct_output: &[f64], mut draw_element: DF) where DF: FnMut(DrawElement) {
+fn draw<DF>(
+    points: &[Reading],
+    amplitude: (f64, f64),
+    dct_offset: usize,
+    dct_output: &[f64],
+    mut draw_element: DF,
+)
+where DF: FnMut(DrawElement)
+{
     if let Some(&Reading { when: max_when, .. }) = points.last() {
         let mut plots_iter = points.iter();
         let first_reading = plots_iter.next().unwrap();
@@ -172,6 +192,7 @@ fn draw<DF>(points: &[Reading], amplitude: (f64, f64), dct_output: &[f64], mut d
             .unwrap();
 
         let mut prev_reading = first_reading;
+        let mut readings_done = 0;
         while let Some(reading) = plots_iter.next() {
             let source_x = 1.0 - ((max_when - prev_reading.when).as_secs_f64() / (max_when - first_reading.when).as_secs_f64());
             let target_x = 1.0 - ((max_when - reading.when).as_secs_f64() / (max_when - first_reading.when).as_secs_f64());
@@ -183,18 +204,21 @@ fn draw<DF>(points: &[Reading], amplitude: (f64, f64), dct_output: &[f64], mut d
                 target_x,
                 target_y: (reading.value - amplitude.0) / (amplitude.1 - amplitude.0),
             });
-            if let Some(dct_value) = dct_iter.as_mut().and_then(|iter| iter.next()) {
-                draw_element(DrawElement::Line {
-                    color: [1., 1., 0., 1.,],
-                    radius: 1.0,
-                    source_x,
-                    source_y: (prev_dct_value - amplitude.0) / (amplitude.1 - amplitude.0),
-                    target_x,
-                    target_y: (dct_value - amplitude.0) / (amplitude.1 - amplitude.0),
-                });
-                prev_dct_value = dct_value;
+            if readings_done >= dct_offset {
+                if let Some(dct_value) = dct_iter.as_mut().and_then(|iter| iter.next()) {
+                    draw_element(DrawElement::Line {
+                        color: [1., 1., 0., 1.,],
+                        radius: 1.0,
+                        source_x,
+                        source_y: (prev_dct_value - amplitude.0) / (amplitude.1 - amplitude.0),
+                        target_x,
+                        target_y: (dct_value - amplitude.0) / (amplitude.1 - amplitude.0),
+                    });
+                    prev_dct_value = dct_value;
+                }
             }
             prev_reading = reading;
+            readings_done += 1;
         }
     }
 }
@@ -252,6 +276,7 @@ fn noised_signal_gen(
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct DctParams {
     coeffs_count: usize,
+    outputs_offset: usize,
     outputs_count: usize,
 }
 
@@ -281,7 +306,7 @@ impl Dct {
     fn apply(&mut self, points: &[Reading], amplitude: (f64, f64)) {
         self.dct_input.clear();
         self.dct_input.extend(
-            points[.. self.params.outputs_count]
+            points[self.params.outputs_offset .. self.params.outputs_offset + self.params.outputs_count]
                 .iter()
                 .map(|reading| {
                     (reading.value - amplitude.0) / (amplitude.1 - amplitude.0)

@@ -2,6 +2,7 @@
 name = "periodogram"
 version = "0.1.2"
 authors = ["Alexey Voznyuk <me@swizard.info>"]
+description = "Visual utility for signal periodogram experiments"
 edition = "2018"
 
 [dependencies]

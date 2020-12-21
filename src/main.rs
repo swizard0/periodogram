@@ -59,10 +59,11 @@ fn main() {
             let trans = context.transform.trans(5.0, 20.0);
             text::Text::new_color([0.0, 1.0, 0.0, 1.0], 16).draw(
                 &format!(
-                    "outputs offset: Q/W [ {} ], #outputs: A/S [ {} ], #coeffs Z/X [ {} ]",
+                    "outputs offset: Q/W [ {} ], #outputs: A/S [ {} ], #coeffs Z/X [ {} ], stddev = {:.4}",
                     dct.params.outputs_offset,
                     dct.params.outputs_count,
                     dct.params.coeffs_count,
+                    dct.stddev(&points).unwrap_or(0.0),
                 ),
                 &mut glyphs,
                 &context.draw_state,
@@ -215,6 +216,8 @@ where DF: FnMut(DrawElement)
                         target_y: (dct_value - amplitude.0) / (amplitude.1 - amplitude.0),
                     });
                     prev_dct_value = dct_value;
+                } else {
+                    dct_iter = None;
                 }
             }
             prev_reading = reading;
@@ -336,5 +339,24 @@ impl Dct {
             *v *= amplitude.1 - amplitude.0;
             *v += amplitude.0;
         }
+    }
+
+    fn stddev(&self, points: &[Reading]) -> Option<f64> {
+        let (sq_sum, mean_sum) = points
+            .iter()
+            .skip(self.params.outputs_offset)
+            .map(|reading| reading.value)
+            .zip(self.dct_output.iter().cloned())
+            .fold(None, |maybe_sums, (observed, expected)| {
+                let diff = expected - observed;
+                if let Some((sq_sum, mean_sum)) = maybe_sums {
+                    Some((sq_sum + (diff * diff), mean_sum + diff))
+                } else {
+                    Some((diff * diff, diff))
+                }
+            })?;
+        let sq_avg = sq_sum / self.params.outputs_count as f64;
+        let avg = mean_sum / self.params.outputs_count as f64;
+        Some((sq_avg - (avg * avg)).sqrt())
     }
 }
